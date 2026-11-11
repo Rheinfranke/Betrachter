@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Biodanza Betrachter 1</title>
+<style>
+  :root { --ink: #222; --muted: #666; --line: #e3e3e3; --blue: #2a78d6; --orange: #eb6834; --green: #1baa7a; --purple: #8a4fd0; --bg: #fff; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); margin: 0; padding: 12px; max-width: 1200px; margin-inline: auto; }
+  h1 { font-size: 1.25rem; margin: 0 0 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+  button, select, input[type=time], input[type=number] { font: inherit; padding: 6px 10px; border: 1px solid #bbb; border-radius: 6px; background: #f7f7f7; }
+  button.on { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .stat { color: var(--muted); font-size: .9rem; }
+  canvas { width: 100%; display: block; touch-action: pan-y; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 10px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tr.sel { background: #e8f0fb; }
+  tbody tr { cursor: pointer; }
+  .scroll { max-height: 260px; overflow: auto; }
+  .hint { color: var(--muted); font-size: .85rem; }
+  .legend span { display: inline-block; margin-right: 12px; font-size: .8rem; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<h1>Biodanza Betrachter</h1>
+<div class="row">
+  <label><b>ZIP oder JSON öffnen:</b> <input type="file" id="file" accept=".zip,.json" multiple></label>
+  <button id="mYoga" class="on">Yoga</button><button id="mNacht">Nacht</button>
+</div>
+<div id="info" class="stat">Noch keine Messung geladen. Es wird nichts hochgeladen, alles bleibt auf diesem Gerät.</div>
+
+<div class="card">
+  <div class="legend" id="legTop"></div>
+  <canvas id="ov" height="300"></canvas>
+  <div class="hint">Antippen wählt die Stelle für die Großaufnahme.</div>
+</div>
+
+<div class="card" id="nachtCard" style="display:none">
+  <div class="row"><b>Zuckungen</b>
+    <select id="nFilter"><option value="gueltig">nur vorgeprüft gültige</option><option value="zuck">alle Zuckungen</option><option value="alle">alle Ereignisse</option><option value="vergleich">Vergleichsfenster</option></select>
+    <select id="nSpan"><option value="50">ganzes Fenster (15 s davor, 35 s danach)</option><option value="20">20 s um T0 (5 s davor)</option></select>
+    <label><input type="checkbox" id="nEkg"> EKG zeigen</label>
+    <span class="stat" id="nCount"></span>
+  </div>
+  <div class="scroll"><table><thead><tr><th>Nr</th><th>Uhrzeit</th><th>Art</th><th>Puls vorher</th><th>Spitze</th><th>Anstieg</th><th>Abstand zur vorigen</th><th>Fuß mg</th><th>Brust mg</th><th>Vorprüfung</th></tr></thead><tbody id="nList"></tbody></table></div>
+  <div class="hint">Vorprüfung: mindestens 15 s seit der vorigen Zuckung, keine sicheren Schritte in 3 s Umgebung, Brust unter 300 mg. Die genaue Prüfung mit EKG steht im Nachtbericht.</div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <button id="back">◀</button><button id="fwd">▶</button>
+    <input type="time" id="tpick" step="1"> <button id="go">Gehe zu</button>
+    <span class="stat" id="dInfo"></span>
+  </div>
+  <div class="legend" id="legDet"></div>
+  <canvas id="det" height="520"></canvas>
+</div>
+
+<div class="card">
+  <div class="row"><b>Tätigkeiten</b> <span class="stat">Automatisch erkannte Blöcke ab 20 Minuten. Ändern, löschen oder neu eintragen, dann speichern.</span></div>
+  <div class="scroll"><table><thead><tr><th>Beginn</th><th>Ende</th><th>Tätigkeit</th><th>Herkunft</th><th></th></tr></thead><tbody id="aList"></tbody></table></div>
+  <div class="row">
+    <button id="aAdd">Neuer Block an der gewählten Stelle</button>
+    <button id="aSave">Tätigkeiten speichern</button>
+    <span class="stat" id="aStat"></span>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2, "0");
+const ACTS = ["Yoga: Hot26", "Yoga: Raja", "Yoga: Vinyasa", "Yoga: Soulful Vinyasa", "Yoga: Warme Vinyasa 1", "Yoga: Aerial", "Yoga", "Biodanza", "Gehen", "Radfahren", "Autofahren", "Sitzen ruhig", "Schreibtisch", "Liegen", "Schlafen", "Sonstiges"];
+const ACOL = { Gehen: "#1baa7a", Autofahren: "#888", Radfahren: "#148ca0", Liegen: "#a0c4ee", Schlafen: "#648cc8", "Sitzen ruhig": "#c8c8c8", Schreibtisch: "#c8c8c8", Biodanza: "#d6488c", Sonstiges: "#bbb" };
+const acol = n => ACOL[n] || (/^Yoga/.test(n) ? "#8a4fd0" : "#bbb");
+let J = null, T0 = 0, fileId = "", mode = "yoga", S = null, sel = null, acts = [], nSel = null;
+
+/* ---------- ZIP lesen ---------- */
+async function unzip(buf) {
+  const dv = new DataView(buf); let e = buf.byteLength - 22;
+  while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error("keine ZIP-Datei");
+  const n = dv.getUint16(e + 10, true); let p = dv.getUint32(e + 16, true); const files = {};
+  for (let i = 0; i < n; i++) {
+    const meth = dv.getUint16(p + 10, true), csz = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    files[new TextDecoder().decode(new Uint8Array(buf, p + 46, nl))] = { meth, csz, lo }; p += 46 + nl + el + cl;
+  }
+  return { names: Object.keys(files), async get(name) {
+    const f = files[name], nl = dv.getUint16(f.lo + 26, true), el = dv.getUint16(f.lo + 28, true), data = new Uint8Array(buf, f.lo + 30 + nl + el, f.csz);
+    if (f.meth === 0) return data;
+    const s = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw")); return new Uint8Array(await new Response(s).arrayBuffer());
+  } };
+}
+$("file").addEventListener("change", async ev => {
+  const fs = [...ev.target.files]; let edits = null;
+  try {
+    for (const f of fs) {
+      const buf = await f.arrayBuffer();
+      if (/\.zip$/i.test(f.name)) {
+        const z = await unzip(buf), jn = z.names.find(n => /(^|_)Fenster\d*_.*\.json$/.test(n)), tn = z.names.find(n => /^Taetigkeiten_.*\.json$/.test(n));
+        if (!jn) throw new Error("Im ZIP fehlt die Datei Fenster…json.");
+        J = JSON.parse(new TextDecoder().decode(await z.get(jn))); fileId = jn.replace(/^(.*_)?Fenster\d*_|\.json$/g, "");
+        if (tn) edits = JSON.parse(new TextDecoder().decode(await z.get(tn)));
+      } else {
+        const o = JSON.parse(new TextDecoder().decode(buf));
+        if (o.taetigkeiten && !o.schlaege) edits = o; else { J = o; fileId = f.name.replace(/^Fenster\d*_|\.json$/g, ""); }
+      }
+    }
+    if (!J) throw new Error("Keine Messung gefunden.");
+    if (!J.schlaege) { $("info").textContent = "Diese Datei stammt aus einer älteren Version (" + (J.version || "?") + "). Der Betrachter braucht Messungen ab Messplayer 9."; J = null; return; }
+    prepare(edits);
+  } catch (e) { $("info").textContent = "Fehler beim Laden: " + (e.message || e); }
+});
+
+/* ---------- Daten aufbereiten ---------- */
+function decodeStrom(st) {
+  const b = { t: [], x: [], y: [], z: [], md: [] }, f = { t: [], aus: [], dreh: [] };
+  (st?.brust || []).forEach(s => { let x = 0, y = 0, z = 0; for (let i = 0; i < s.n; i++) { x += s.x[i]; y += s.y[i]; z += s.z[i]; b.t.push(s.start_ms + i * 100); b.x.push(x); b.y.push(y); b.z.push(z); b.md.push(s.md[i]); } });
+  (st?.fuss || []).forEach(s => { for (let i = 0; i < s.n; i++) { f.t.push(s.start_ms + i * 100); f.aus.push(s.aus[i]); f.dreh.push(s.dreh[i]); } });
+  return { b: { t: Float64Array.from(b.t), x: Float32Array.from(b.x), y: Float32Array.from(b.y), z: Float32Array.from(b.z), md: Float32Array.from(b.md) }, f: { t: Float64Array.from(f.t), aus: Float32Array.from(f.aus), dreh: Float32Array.from(f.dreh) } };
+}
+function lb(a, x) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < x) lo = m + 1; else hi = m; } return lo; }
+function prepare(edits) {
+  T0 = J.t0_epoch_ms;
+  const sc = J.schlaege, n = sc.t.length, bt = new Float64Array(n), rr = new Float32Array(n), bpm = new Float32Array(n), ok = new Uint8Array(n);
+  for (let i = 0; i < n; i++) { bt[i] = sc.t[i]; rr[i] = sc.rr[i]; bpm[i] = 60000 / sc.rr[i]; ok[i] = sc.rr[i] > 300 && sc.rr[i] < 2000 ? 1 : 0; }
+  for (let i = 0; i < n; i++) { if (!ok[i]) continue; const w = []; for (let k = Math.max(0, i - 5); k <= Math.min(n - 1, i + 5); k++) if (ok[k]) w.push(bpm[k]); w.sort((a, b) => a - b); if (Math.abs(bpm[i] - w[w.length >> 1]) >= 25) ok[i] = 0; }
+  const lo = new Float32Array(n).fill(NaN), hi = new Float32Array(n).fill(NaN), avg = new Float32Array(n).fill(NaN);
+  let a = 0, b = 0;
+  for (let i = 0; i < n; i++) { while (bt[a] < bt[i] - 5000) a++; while (b < n && bt[b] <= bt[i] + 5000) b++;
+    let mn = Infinity, mx = -Infinity, s = 0, c = 0; for (let k = a; k < b; k++) if (ok[k]) { if (bpm[k] < mn) mn = bpm[k]; if (bpm[k] > mx) mx = bpm[k]; s += rr[k]; c++; }
+    if (c) { lo[i] = mn; hi[i] = mx; avg[i] = 60000 / (s / c); } }
+  const st = decodeStrom(J.strom);
+  const steps = (J.schritte || []).filter(s => s.sicher).map(s => s.t);
+  const tEnd = Math.max(bt[n - 1] || 0, st.b.t[st.b.t.length - 1] || 0);
+  S = { bt, rr, bpm, ok, lo, hi, avg, st, steps: Float64Array.from(steps), tEnd, klima: J.klima || [] };
+  acts = (J.taetigkeiten_auto || []).map(x => ({ a: x.start_ms, b: x.ende_ms, name: x.name, src: "automatisch" }));
+  if (edits && edits.taetigkeiten) acts = edits.taetigkeiten.map(x => ({ a: x.start_ms, b: x.ende_ms, name: x.name, src: x.herkunft || "von Hand" }));
+  const d = new Date(T0);
+  $("info").textContent = `${J.version}, Beginn ${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())} Uhr, ${Math.round(tEnd / 60000)} Minuten, ${n} Herzschläge` + (J.nacht ? `, Nachtmodus mit ${(J.nacht.ereignisse || []).length} Ereignissen` : "");
+  setMode(J.nacht && J.nacht.ereignisse ? "nacht" : "yoga");
+  sel = 0; const firstAct = acts[0]; if (firstAct) sel = firstAct.a + 60000;
+  if (mode === "nacht") { buildEvents(); const v = evList.find(e => e.ok) || evList[0]; if (v) selectEvent(v); else drawAll(); } else drawAll();
+  renderActs();
+}
+
+/* ---------- Zeichnen ---------- */
+function ctxOf(cv) { const r = window.devicePixelRatio || 1; if (!cv._h) cv._h = cv.height; const w = cv.clientWidth, h = cv._h; cv.width = Math.round(w * r); cv.height = Math.round(h * r); cv.style.height = h + "px"; const c = cv.getContext("2d"); c.setTransform(r, 0, 0, r, 0, 0); c.font = "11px system-ui, sans-serif"; return { c, w, h }; }
+const hm = t => { const d = new Date(T0 + t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const hms = t => { const d = new Date(T0 + t); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+function axisY(c, x, y0, y1, v0, v1, step, w) {
+  c.strokeStyle = "#ececec"; c.fillStyle = "#666"; c.lineWidth = 1;
+  for (let v = Math.ceil(v0 / step) * step; v <= v1; v += step) { const y = y1 - (v - v0) / (v1 - v0) * (y1 - y0); c.beginPath(); c.moveTo(x, y); c.lineTo(x + w, y); c.stroke(); c.fillText(String(v), 4, y + 4); }
+}
+function legend(id, items) { $(id).innerHTML = items.map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join(""); }
+let ovMap = null;
+function drawOverview() {
+  const cv = $("ov"); const { c, w, h } = ctxOf(cv); c.clearRect(0, 0, w, h); if (!S) return;
+  const L = 34, R = 8, W = w - L - R, t0 = 0, t1 = S.tEnd, X = t => L + (t - t0) / (t1 - t0) * W; ovMap = { L, W, t0, t1 };
+  /* Tätigkeiten */
+  acts.forEach(a => { c.fillStyle = acol(a.name); c.fillRect(X(a.a), 4, Math.max(2, X(a.b) - X(a.a)), 10); });
+  /* Puls */
+  const pv = []; for (let i = 0; i < S.bpm.length; i++) if (S.ok[i]) pv.push(S.bpm[i]);
+  pv.sort((a, b) => a - b); const v0 = Math.floor((pv[Math.floor(pv.length * 0.005)] - 5) / 10) * 10, v1 = Math.ceil((pv[Math.floor(pv.length * 0.995)] + 5) / 10) * 10;
+  const y0 = 20, y1 = 200, Y = v => y1 - (v - v0) / (v1 - v0) * (y1 - y0);
+  axisY(c, L, y0, y1, v0, v1, v1 - v0 > 80 ? 20 : 10, W);
+  /* Hüllkurve als Band je Bildpunkt */
+  const cols = Math.ceil(W), mn = new Float32Array(cols).fill(Infinity), mx = new Float32Array(cols).fill(-Infinity), sum = new Float32Array(cols), cnt = new Uint16Array(cols);
+  for (let i = 0; i < S.bpm.length; i++) { if (!S.ok[i]) continue; const k = Math.floor(X(S.bt[i]) - L); if (k < 0 || k >= cols) continue; if (S.lo[i] < mn[k]) mn[k] = S.lo[i]; if (S.hi[i] > mx[k]) mx[k] = S.hi[i]; sum[k] += S.bpm[i]; cnt[k]++; }
+  c.fillStyle = "rgba(42,120,214,.22)"; for (let k = 0; k < cols; k++) if (cnt[k]) c.fillRect(L + k, Y(mx[k]), 1, Y(mn[k]) - Y(mx[k]));
+  c.strokeStyle = "#2a78d6"; c.lineWidth = 1.2; c.beginPath(); let on = false;
+  for (let k = 0; k < cols; k++) { if (!cnt[k]) { on = false; continue; } const y = Y(sum[k] / cnt[k]); if (!on) { c.moveTo(L + k, y); on = true; } else c.lineTo(L + k, y); } c.stroke();
+  /* Ereignisse der Nacht */
+  if (mode === "nacht" && evList) evList.forEach(e => { if (e.art === "Vergleich") return; c.fillStyle = e.ok ? "#1baa7a" : "#bbb"; c.fillRect(X(e.t), y1 + 2, 1, 6); });
+  /* Temperatur und WBGT */
+  const K = S.klima; const y2 = 215, y3 = 280;
+  if (K.length) { const vs = K.flatMap(k => [k.c, k.wbgt]).filter(Number.isFinite), lo = Math.floor(Math.min(...vs)) - 1, hi = Math.ceil(Math.max(...vs)) + 1, YT = v => y3 - (v - lo) / (hi - lo) * (y3 - y2);
+    axisY(c, L, y2, y3, lo, hi, hi - lo > 20 ? 10 : 5, W);
+    const qs = [...new Set(K.map(k => k.quelle))], qc = ["#eb6834", "#8a4fd0", "#1baa7a"];
+    qs.forEach((q, i) => { const Q = K.filter(k => k.quelle === q); ["c", "wbgt"].forEach(f => { c.strokeStyle = qc[i % 3]; c.setLineDash(f === "c" ? [] : [4, 3]); c.lineWidth = 1.3; c.beginPath(); let s = false; Q.forEach(k => { if (!Number.isFinite(k[f])) return; const x = X(k.t), y = YT(k[f]); if (!s) { c.moveTo(x, y); s = true; } else c.lineTo(x, y); }); c.stroke(); }); });
+    c.setLineDash([]); }
+  else { c.fillStyle = "#999"; c.fillText("keine Temperaturwerte", L + 4, y2 + 30); }
+  /* Zeitachse und Auswahl */
+  c.fillStyle = "#666"; const span = t1 - t0, stp = span > 6 * 3600000 ? 3600000 : span > 2 * 3600000 ? 1800000 : 600000;
+  for (let t = Math.ceil((T0 + t0) / stp) * stp - T0; t <= t1; t += stp) { const x = X(t); c.fillRect(x, 286, 1, 4); c.fillText(hm(t), x - 14, 299); }
+  if (sel !== null) { const span2 = mode === "nacht" && nSel ? (+$("nSpan").value === 50 ? 50000 : 20000) : 20000, a = mode === "nacht" && nSel ? nSel.t - (span2 === 50000 ? 15000 : 5000) : sel;
+    c.fillStyle = "rgba(235,104,52,.25)"; c.fillRect(X(a), 16, Math.max(2, X(a + span2) - X(a)), 270); }
+  legend("legTop", [["#2a78d6", "Puls je Minute (Linie) mit kleinstem und größtem Schlag in 10 s (Band)"], ["#eb6834", "Temperatur (Linie) und WBGT geschätzt (gestrichelt)"], ...[...new Set(acts.map(a => a.name))].map(n => [acol(n), n])]);
+}
+$("ov").addEventListener("click", ev => {
+  if (!S || !ovMap) return; const r = $("ov").getBoundingClientRect(), x = ev.clientX - r.left, t = ovMap.t0 + (x - ovMap.L) / ovMap.W * (ovMap.t1 - ovMap.t0);
+  if (mode === "nacht" && evList.length) { let best = null, bd = Infinity; filtered().forEach(e => { const d = Math.abs(e.t - t); if (d < bd) { bd = d; best = e; } }); if (best) selectEvent(best); return; }
+  sel = Math.max(0, Math.round(t - 10000)); drawAll();
+});
+
+/* Atemwelle aus dem 10-Hz-Strom: Bandpass 0,1 bis 0,7 Hz, Hauptachse, Einatmen nach oben */
+function biquad(x, b0, b1, b2, a1, a2) { const y = new Float32Array(x.length); let x1 = 0, x2 = 0, y1 = 0, y2 = 0; for (let i = 0; i < x.length; i++) { const v = b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v; } return y; }
+function lp(x, fc, fs) { const w = 2 * Math.PI * fc / fs, al = Math.sin(w) / Math.SQRT2, co = Math.cos(w), a0 = 1 + al; return biquad(x, (1 - co) / 2 / a0, (1 - co) / a0, (1 - co) / 2 / a0, -2 * co / a0, (1 - al) / a0); }
+function hp(x, fc, fs) { const w = 2 * Math.PI * fc / fs, al = Math.sin(w) / Math.SQRT2, co = Math.cos(w), a0 = 1 + al; return biquad(x, (1 + co) / 2 / a0, -(1 + co) / a0, (1 + co) / 2 / a0, -2 * co / a0, (1 - al) / a0); }
+function filtfilt(x, f) { const a = f(x), r = Float32Array.from(a).reverse(), b = f(r); return b.reverse(); }
+function breathWave(a, b) {
+  const B = S.st.b, i0 = lb(B.t, a - 60000), i1 = lb(B.t, b + 60000); if (i1 - i0 < 100) return null;
+  const n = i1 - i0, ch = [B.x, B.y, B.z].map(arr => { const m = arr.subarray(i0, i1), mu = m.reduce((s, v) => s + v, 0) / n, x = Float32Array.from(m, v => v - mu); return filtfilt(filtfilt(x, v => hp(v, 0.1, 10)), v => lp(v, 0.7, 10)); });
+  /* Hauptachse über die Kovarianz (Potenzverfahren) */
+  const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]; for (let k = 0; k < n; k++) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += ch[i][k] * ch[j][k];
+  let v = [1, 1, 1]; for (let it = 0; it < 50; it++) { const u = [0, 1, 2].map(i => C[i][0] * v[0] + C[i][1] * v[1] + C[i][2] * v[2]), l = Math.hypot(...u) || 1; v = u.map(x => x / l); }
+  const w = new Float32Array(n), t = B.t.subarray(i0, i1); for (let k = 0; k < n; k++) w[k] = v[0] * ch[0][k] + v[1] * ch[1][k] + v[2] * ch[2][k];
+  /* Vorzeichen: so, dass die Welle mit dem Puls steigt */
+  let s = 0; for (let k = 0; k < n; k++) { const j = lb(S.bt, t[k]); if (j > 0 && j < S.bt.length && S.ok[j] && Number.isFinite(S.avg[j])) s += w[k] * (S.bpm[j] - S.avg[j]); }
+  if (s < 0) for (let k = 0; k < n; k++) w[k] = -w[k];
+  return { t, w, md: B.md.subarray(i0, i1) };
+}
+function drawDetail() {
+  const cv = $("det"); const { c, w, h } = ctxOf(cv); c.clearRect(0, 0, w, h); if (!S) return;
+  const night = mode === "nacht" && nSel, span = night ? (+$("nSpan").value === 50 ? 50000 : 20000) : 20000;
+  const a = night ? nSel.t - (span === 50000 ? 15000 : 5000) : sel, b = a + span, L = 40, R = 8, W = w - L - R, X = t => L + (t - a) / span * W;
+  const showEkg = night && $("nEkg").checked;
+  const P = { atem: [10, 120], puls: [140, 380], bew: [400, showEkg ? 450 : 500], ekg: [462, 512] };
+  /* Atem */
+  const bw = breathWave(a, b); c.fillStyle = "#555"; c.fillText("Atem (Brust)", L, P.atem[0] + 2);
+  if (bw) { const i0 = lb(bw.t, a), i1 = lb(bw.t, b); let m = 1; for (let k = i0; k < i1; k++) m = Math.max(m, Math.abs(bw.w[k])); const Y = v => (P.atem[0] + P.atem[1]) / 2 + 6 - v / m * (P.atem[1] - P.atem[0] - 14) / 2;
+    for (let k = i0; k < i1; k++) if (bw.md[k] > 25) { c.fillStyle = "rgba(0,0,0,.08)"; c.fillRect(X(bw.t[k]) - W / span * 50, P.atem[0], W / span * 100, P.puls[1] - P.atem[0]); }
+    for (let k = i0 + 1; k < i1 - 1; k++) if (bw.w[k] >= bw.w[k - 1] && bw.w[k] < bw.w[k + 1]) { let e = k + 1; while (e < i1 - 1 && bw.w[e + 1] > bw.w[e]) e++; c.fillStyle = "rgba(42,120,214,.09)"; c.fillRect(X(bw.t[k]), P.atem[0], X(bw.t[e]) - X(bw.t[k]), P.puls[1] - P.atem[0]); k = e; }
+    c.strokeStyle = "#2a78d6"; c.lineWidth = 2; c.beginPath(); for (let k = i0; k < i1; k++) { const x = X(bw.t[k]), y = Y(bw.w[k]); k === i0 ? c.moveTo(x, y) : c.lineTo(x, y); } c.stroke(); }
+  else { c.fillStyle = "#999"; c.fillText("kein 10-Hz-Strom an dieser Stelle", L + 80, P.atem[0] + 40); }
+  /* Herzschläge */
+  const j0 = lb(S.bt, a), j1 = lb(S.bt, b); const vs = []; for (let k = j0; k < j1; k++) if (S.ok[k]) vs.push(S.bpm[k], S.avg[k]);
+  if (vs.length) { const v0 = Math.floor((Math.min(...vs) - 4) / 5) * 5, v1 = Math.ceil((Math.max(...vs) + 8) / 5) * 5, Y = v => P.puls[1] - (v - v0) / (v1 - v0) * (P.puls[1] - P.puls[0]);
+    axisY(c, L, P.puls[0], P.puls[1], v0, v1, v1 - v0 > 60 ? 20 : v1 - v0 > 30 ? 10 : 5, W);
+    c.strokeStyle = "#333"; c.setLineDash([6, 4]); c.lineWidth = 1.6; c.beginPath(); let s = false; for (let k = j0; k < j1; k++) { if (!Number.isFinite(S.avg[k])) continue; const x = X(S.bt[k]), y = Y(S.avg[k]); s ? c.lineTo(x, y) : c.moveTo(x, y); s = true; } c.stroke(); c.setLineDash([]);
+    c.strokeStyle = "#bbb"; c.lineWidth = 1; c.beginPath(); s = false; for (let k = j0; k < j1; k++) { if (!S.ok[k]) { s = false; continue; } const x = X(S.bt[k]), y = Y(S.bpm[k]); s ? c.lineTo(x, y) : c.moveTo(x, y); s = true; } c.stroke();
+    const crowded = (j1 - j0) > W / 42, tiny = (j1 - j0) > W / 22;
+    let r0 = night ? lb(S.bt, nSel.t) : null;
+    for (let k = j0; k < j1; k++) { const x = X(S.bt[k]), y = Y(S.bpm[k]);
+      c.fillStyle = S.ok[k] ? "#eb6834" : "#ccc"; c.beginPath(); c.arc(x, y, 4, 0, 7); c.fill();
+      if (!tiny) { c.fillStyle = "#666"; c.font = (crowded ? "9px" : "10px") + " system-ui, sans-serif"; c.textAlign = "center"; const up = !crowded || k % 2 === 0;
+        c.fillText(Math.round(S.rr[k]) + " ms", x, up ? y - 18 : y + 16); c.fillText("(" + Math.round(S.bpm[k]) + ")", x, up ? y - 7 : y + 27); c.textAlign = "left"; c.font = "11px system-ui, sans-serif"; }
+      if (night && r0 !== null) { const rel = k - r0 + (k >= r0 ? 1 : 0); c.fillStyle = "#999"; c.font = "9px system-ui, sans-serif"; c.textAlign = "center"; if (Math.abs(rel) <= 25 && (!crowded || rel % 2 === 0 || Math.abs(rel) <= 3)) c.fillText((rel > 0 ? "+" : "") + rel, x, P.puls[1] + 11); c.textAlign = "left"; c.font = "11px system-ui, sans-serif"; } } }
+  c.fillStyle = "#555"; c.fillText("Puls je Herzschlag (Schläge pro Minute)", L, P.puls[0] - 4);
+  /* Bewegung */
+  const F = S.st.f, B = S.st.b; c.fillStyle = "#555"; c.fillText("Bewegung: Fuß (grün), Brust Stoß (grau)", L, P.bew[0] - 2);
+  { const f0 = lb(F.t, a), f1 = lb(F.t, b), g0 = lb(B.t, a), g1 = lb(B.t, b); let m = 40; for (let k = f0; k < f1; k++) m = Math.max(m, F.aus[k]); for (let k = g0; k < g1; k++) m = Math.max(m, B.md[k]);
+    const Y = v => P.bew[1] - Math.sqrt(Math.min(1, Math.max(0, v) / m)) * (P.bew[1] - P.bew[0] - 6), bwid = Math.max(1, W / span * 100 - 0.5);
+    for (let k = g0; k < g1; k++) { c.fillStyle = "#999"; c.fillRect(X(B.t[k]), Y(B.md[k]), bwid, P.bew[1] - Y(B.md[k])); }
+    for (let k = f0; k < f1; k++) { c.fillStyle = "rgba(27,170,122,.85)"; c.fillRect(X(F.t[k]), Y(F.aus[k]), bwid, P.bew[1] - Y(F.aus[k])); }
+    c.fillStyle = "#999"; c.fillText(Math.round(m) + " mg", 2, P.bew[0] + 10); c.fillText("Wurzelskala", 2, P.bew[0] + 22);
+    for (let k = lb(S.steps, a); k < S.steps.length && S.steps[k] < b; k++) { c.fillStyle = "#1baa7a"; c.fillRect(X(S.steps[k]) - 1, P.bew[1] + 1, 2, 4); } }
+  /* EKG */
+  if (showEkg) { const fw = (J.nacht.fenster || []).find(f => f.nr === nSel.fenster) || (J.nacht.fenster || []).find(f => f.start_ms <= nSel.t && f.ende_ms >= nSel.t);
+    if (fw && fw.ekg) { const e = fw.ekg, i0 = lb(e.t, a), i1 = lb(e.t, b); let mn = Infinity, mx = -Infinity; for (let k = i0; k < i1; k++) { mn = Math.min(mn, e.uV[k]); mx = Math.max(mx, e.uV[k]); }
+      const Y = v => P.ekg[1] - (v - mn) / (mx - mn || 1) * (P.ekg[1] - P.ekg[0]); c.strokeStyle = "#444"; c.lineWidth = 0.8; c.beginPath(); for (let k = i0; k < i1; k++) { const x = X(e.t[k]), y = Y(e.uV[k]); k === i0 ? c.moveTo(x, y) : c.lineTo(x, y); } c.stroke();
+      (fw.r_zacken_ms || []).forEach(r => { if (r >= a && r < b) { c.fillStyle = "#eb6834"; c.fillRect(X(r) - 0.5, P.ekg[0] - 4, 1, 4); } }); c.fillStyle = "#555"; c.fillText("EKG", L, P.ekg[0] - 4); }
+    else { c.fillStyle = "#999"; c.fillText("kein EKG-Fenster an dieser Stelle", L, P.ekg[0] + 20); } }
+  /* Zeitachse, T0 */
+  c.fillStyle = "#666"; const st = span > 30000 ? 5000 : 2000;
+  for (let t = Math.ceil(a / st) * st; t <= b; t += st) { const x = X(t); c.fillRect(x, h - 22, 1, 4); c.textAlign = "center"; c.fillText(night ? ((t - nSel.t) / 1000 > 0 ? "+" : "") + Math.round((t - nSel.t) / 1000) + " s" : hms(t), x, h - 8); c.textAlign = "left"; }
+  if (night) { c.strokeStyle = "#1baa7a"; c.lineWidth = 1.5; c.beginPath(); c.moveTo(X(nSel.t), P.atem[0]); c.lineTo(X(nSel.t), P.bew[1]); c.stroke(); c.fillStyle = "#1baa7a"; c.fillText("T0", X(nSel.t) + 3, P.atem[0] + 10); }
+  $("dInfo").textContent = `${hms(a)} bis ${hms(b)} Uhr` + (night ? `, ${nSel.art} Nr. ${nSel.nr}` : "");
+  $("tpick").value = hms(a);
+  legend("legDet", [["#2a78d6", "Atemwelle, hellblau hinterlegt Einatmen"], ["#eb6834", "Herzschlag: Abstand in ms, in Klammern der Puls aus diesem Abstand"], ["#333", "gestrichelt: gleitender Durchschnitt über 10 s"], ["#ddd", "grau hinterlegt: Stoß, Atemwelle dort nicht deuten"]]);
+}
+function drawAll() { drawOverview(); drawDetail(); }
+window.addEventListener("resize", () => { if (S) drawAll(); });
+$("back").addEventListener("click", () => { if (!S) return; if (mode === "nacht" && nSel) { const L = filtered(), i = L.indexOf(nSel); if (i > 0) selectEvent(L[i - 1]); return; } sel = Math.max(0, sel - 20000); drawAll(); });
+$("fwd").addEventListener("click", () => { if (!S) return; if (mode === "nacht" && nSel) { const L = filtered(), i = L.indexOf(nSel); if (i < L.length - 1) selectEvent(L[i + 1]); return; } sel = Math.min(S.tEnd - 20000, sel + 20000); drawAll(); });
+$("go").addEventListener("click", () => { if (!S || !$("tpick").value) return; const [h, m, s] = $("tpick").value.split(":").map(Number), d = new Date(T0); d.setHours(h, m, s || 0, 0); let t = d.getTime() - T0; if (t < 0) t += 86400000; if (mode === "nacht") { nSel = null; } sel = t; drawAll(); });
+
+/* ---------- Nacht ---------- */
+let evList = [];
+function buildEvents() {
+  evList = [];
+  const E = (J.nacht?.ereignisse || []).slice().sort((a, b) => a.t_ms - b.t_ms); let lastZ = -1e12;
+  E.forEach(e => { const it = { nr: e.nr, art: e.art, t: e.t_ms, base: e.puls_vorher, pk: e.puls_spitze, fuss: e.fuss_mg, brust: e.brust_mg, fenster: e.fenster };
+    it.abst = e.art === "Zuckung" && lastZ > -1e11 ? (e.t_ms - lastZ) / 1000 : null;
+    const k = lb(S.steps, e.t_ms - 3000), stepNear = k < S.steps.length && S.steps[k] < e.t_ms + 3000;
+    it.ok = e.art === "Zuckung" && (it.abst === null || it.abst >= 15) && !stepNear && !(e.brust_mg >= 300);
+    if (e.art === "Zuckung") lastZ = e.t_ms; evList.push(it); });
+  (J.nacht?.fenster || []).filter(f => (f.arten || []).includes("Vergleich")).forEach(f => evList.push({ nr: "V" + f.nr, art: "Vergleich", t: f.start_ms + 15000, fenster: f.nr, ok: false }));
+  evList.sort((a, b) => a.t - b.t); renderEvents();
+}
+function filtered() { const f = $("nFilter").value; return evList.filter(e => f === "alle" ? e.art !== "Vergleich" : f === "zuck" ? e.art === "Zuckung" : f === "vergleich" ? e.art === "Vergleich" : e.ok); }
+function renderEvents() {
+  const L = filtered(), f1 = v => v === null || v === undefined ? "" : (Math.round(v * 10) / 10).toString().replace(".", ",");
+  $("nCount").textContent = `${L.length} von ${evList.length}`;
+  $("nList").innerHTML = L.map((e, i) => `<tr data-i="${i}" class="${e === nSel ? "sel" : ""}"><td>${e.nr}</td><td>${hms(e.t)}</td><td>${e.art}</td><td>${f1(e.base)}</td><td>${f1(e.pk)}</td><td>${e.base && e.pk ? (e.pk >= e.base ? "+" : "") + f1(e.pk - e.base) : ""}</td><td>${e.abst === null || e.abst === undefined ? "" : f1(e.abst) + " s"}</td><td>${f1(e.fuss)}</td><td>${f1(e.brust)}</td><td>${e.art === "Zuckung" ? (e.ok ? "gültig" : "nein") : ""}</td></tr>`).join("");
+  [...$("nList").querySelectorAll("tr")].forEach(tr => tr.addEventListener("click", () => selectEvent(L[+tr.dataset.i])));
+}
+function selectEvent(e) { nSel = e; sel = e.t; renderEvents(); drawAll(); const r = $("nList").querySelector("tr.sel"); if (r) r.scrollIntoView({ block: "nearest" }); }
+$("nFilter").addEventListener("change", () => { renderEvents(); const L = filtered(); if (L.length && !L.includes(nSel)) selectEvent(L[0]); });
+$("nSpan").addEventListener("change", drawAll); $("nEkg").addEventListener("change", drawAll);
+function setMode(m) { mode = m; $("mYoga").classList.toggle("on", m === "yoga"); $("mNacht").classList.toggle("on", m === "nacht"); $("nachtCard").style.display = m === "nacht" ? "" : "none"; if (m === "yoga") nSel = null; }
+$("mYoga").addEventListener("click", () => { setMode("yoga"); if (S) drawAll(); });
+$("mNacht").addEventListener("click", () => { if (S && !J.nacht) { $("info").textContent += " · Diese Messung hat keinen Nachtmodus."; return; } setMode("nacht"); if (S) { buildEvents(); const v = filtered()[0]; if (v) selectEvent(v); else drawAll(); } });
+
+/* ---------- Tätigkeiten bearbeiten ---------- */
+function toT(v) { const [h, m] = v.split(":").map(Number), d = new Date(T0); d.setHours(h, m, 0, 0); let t = d.getTime() - T0; if (t < -3600000) t += 86400000; return t; }
+function renderActs() {
+  acts.sort((x, y) => x.a - y.a);
+  $("aList").innerHTML = acts.map((x, i) => `<tr><td><input type="time" value="${hm(x.a)}" data-i="${i}" data-k="a"></td><td><input type="time" value="${hm(x.b)}" data-i="${i}" data-k="b"></td><td><select data-i="${i}">${[...new Set([x.name, ...ACTS])].map(n => `<option${n === x.name ? " selected" : ""}>${n}</option>`).join("")}</select></td><td>${x.src}</td><td><button data-del="${i}">löschen</button></td></tr>`).join("");
+  $("aList").querySelectorAll("input").forEach(el => el.addEventListener("change", () => { const x = acts[+el.dataset.i]; x[el.dataset.k] = toT(el.value); x.src = "von Hand"; renderActs(); drawOverview(); }));
+  $("aList").querySelectorAll("select").forEach(el => el.addEventListener("change", () => { const x = acts[+el.dataset.i]; x.name = el.value; x.src = "von Hand"; drawOverview(); }));
+  $("aList").querySelectorAll("button[data-del]").forEach(el => el.addEventListener("click", () => { acts.splice(+el.dataset.del, 1); renderActs(); drawOverview(); }));
+}
+$("aAdd").addEventListener("click", () => { if (!S) return; const a = Math.max(0, (sel ?? 0) - 600000); acts.push({ a, b: Math.min(S.tEnd, a + 1800000), name: "Sonstiges", src: "von Hand" }); renderActs(); drawOverview(); });
+$("aSave").addEventListener("click", () => {
+  if (!S) return;
+  const o = { version: "Betrachter 1", messung: fileId, t0_epoch_ms: T0, gespeichert: new Date().toISOString(), hinweis: "Zeiten in ms seit t0 der Messung. Ersetzt die automatisch erkannten Tätigkeiten.",
+    taetigkeiten: acts.map(x => ({ start_ms: Math.round(x.a), ende_ms: Math.round(x.b), beginn: hms(x.a), ende: hms(x.b), name: x.name, herkunft: x.src })) };
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(o, null, 1)], { type: "application/json" })); a.download = `Taetigkeiten_${fileId}.json`; document.body.appendChild(a); a.click(); a.remove();
+  $("aStat").textContent = `Gespeichert als Taetigkeiten_${fileId}.json. Beim nächsten Öffnen einfach mit dem ZIP zusammen auswählen.`;
+});
+</script>
+</body>
+</html>
