@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Biodanza Betrachter 2</title>
+<title>Biodanza Betrachter 2.1</title>
 <style>
   :root { --ink: #222; --muted: #666; --line: #e3e3e3; --blue: #2a78d6; --orange: #eb6834; --green: #1baa7a; --purple: #8a4fd0; --bg: #fff; }
   * { box-sizing: border-box; }
@@ -26,7 +26,7 @@
 </style>
 </head>
 <body>
-<h1>Biodanza Betrachter 2</h1>
+<h1>Biodanza Betrachter 2.1</h1>
 <div class="row">
   <label><b>ZIP oder JSON öffnen:</b> <input type="file" id="file" accept=".zip,.json" multiple></label>
   <button id="mYoga" class="on">Yoga</button><button id="mNacht">Nacht</button><button id="mSerie">Serie</button><button id="mSamm">Sammlung</button>
@@ -94,6 +94,28 @@
 </div>
 
 <script>
+/* Plausibilität der Herzschläge: EKG-bestätigte gelten immer. Sonst raus: einzelne Ausreißer (weicht von Vor- und Nachgänger um 25 Schläge pro Minute in dieselbe Richtung ab) und geteilte Schläge (zwei kurze Abstände, die zusammen einen normalen ergeben). Ein echter Anstieg über mehrere Schläge bleibt drin. */
+function beatPlaus(rr, ekg) {
+  const n = rr.length, ok = new Uint8Array(n), bad = new Uint8Array(n), p = new Float64Array(n);
+  for (let i = 0; i < n; i++) { ok[i] = rr[i] > 300 && rr[i] < 2000 ? 1 : 0; p[i] = ok[i] ? 60000 / rr[i] : NaN; }
+  const conf = i => !!(ekg && ekg[i]);
+  for (let i = 0; i + 1 < n; i++) {
+    if (!ok[i] || !ok[i + 1] || conf(i) || conf(i + 1)) continue;
+    const w = []; for (let k = Math.max(0, i - 6); k <= Math.min(n - 1, i + 7); k++) if (k !== i && k !== i + 1 && ok[k]) w.push(rr[k]);
+    if (w.length < 4) continue; w.sort((a, b) => a - b); const m = w[w.length >> 1];
+    if (Math.abs(rr[i] + rr[i + 1] - m) < 0.15 * m && Math.min(rr[i], rr[i + 1]) < 0.75 * m) { bad[i] = 1; bad[i + 1] = 1; }
+  }
+  for (let i = 0; i < n; i++) {
+    if (!ok[i] || conf(i) || bad[i]) continue;
+    let j = i - 1; while (j >= 0 && j >= i - 3 && !ok[j]) j--; let k = i + 1; while (k < n && k <= i + 3 && !ok[k]) k++;
+    const hj = j >= 0 && j >= i - 3 && ok[j], hk = k < n && k <= i + 3 && ok[k];
+    if (hj && hk) { const d1 = p[i] - p[j], d2 = p[i] - p[k]; if (Math.abs(d1) >= 25 && Math.abs(d2) >= 25 && d1 * d2 > 0) bad[i] = 1; }
+    else if (hj || hk) { const d = p[i] - p[hj ? j : k]; if (Math.abs(d) >= 40) bad[i] = 1; }
+  }
+  for (let i = 0; i < n; i++) if (bad[i]) ok[i] = 0;
+  return ok;
+}
+
 "use strict";
 const $ = id => document.getElementById(id);
 const pad = n => String(n).padStart(2, "0");
@@ -150,8 +172,8 @@ function lb(a, x) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo +
 function prepare(edits) {
   T0 = J.t0_epoch_ms;
   const sc = J.schlaege, n = sc.t.length, bt = new Float64Array(n), rr = new Float32Array(n), bpm = new Float32Array(n), ok = new Uint8Array(n);
-  for (let i = 0; i < n; i++) { bt[i] = sc.t[i]; rr[i] = sc.rr[i]; bpm[i] = 60000 / sc.rr[i]; ok[i] = sc.rr[i] > 300 && sc.rr[i] < 2000 ? 1 : 0; }
-  for (let i = 0; i < n; i++) { if (!ok[i]) continue; const w = []; for (let k = Math.max(0, i - 5); k <= Math.min(n - 1, i + 5); k++) if (ok[k]) w.push(bpm[k]); w.sort((a, b) => a - b); if (Math.abs(bpm[i] - w[w.length >> 1]) >= 25) ok[i] = 0; }
+  for (let i = 0; i < n; i++) { bt[i] = sc.t[i]; rr[i] = sc.rr[i]; bpm[i] = 60000 / sc.rr[i]; }
+  { const o = beatPlaus(sc.rr, sc.ok); for (let i = 0; i < n; i++) ok[i] = o[i]; }
   const lo = new Float32Array(n).fill(NaN), hi = new Float32Array(n).fill(NaN), avg = new Float32Array(n).fill(NaN);
   let a = 0, b = 0;
   for (let i = 0; i < n; i++) { while (bt[a] < bt[i] - 5000) a++; while (b < n && bt[b] <= bt[i] + 5000) b++;
@@ -284,7 +306,7 @@ function drawDetail() {
   if (night) { c.strokeStyle = "#1baa7a"; c.lineWidth = 1.5; c.beginPath(); c.moveTo(X(nSel.t), P.atem[0]); c.lineTo(X(nSel.t), P.bew[1]); c.stroke(); c.fillStyle = "#1baa7a"; c.fillText("T0", X(nSel.t) + 3, P.atem[0] + 10); }
   $("dInfo").textContent = `${hms(a)} bis ${hms(b)} Uhr` + (night ? `, ${nSel.art} Nr. ${nSel.nr}` : "");
   $("tpick").value = hms(a);
-  legend("legDet", [["#2a78d6", "Atemwelle, hellblau hinterlegt Einatmen"], ["#eb6834", "Herzschlag: Abstand in ms, in Klammern der Puls aus diesem Abstand"], ["#333", "gestrichelt: gleitender Durchschnitt über 10 s"], ["#ddd", "grau hinterlegt: Stoß, Atemwelle dort nicht deuten"]]);
+  legend("legDet", [["#2a78d6", "Atemwelle, hellblau hinterlegt Einatmen"], ["#eb6834", "Herzschlag: Abstand in ms, in Klammern der Puls aus diesem Abstand"], ["#333", "gestrichelt: gleitender Durchschnitt über 10 s"], ["#ddd", "grau hinterlegt: Stoß, Atemwelle dort nicht deuten"], ["#ccc", "grauer Punkt: Herzschlag als unplausibel aussortiert (nicht im EKG bestätigt und einzelner Ausreißer)"]]);
 }
 function drawAll() { drawOverview(); drawDetail(); }
 window.addEventListener("resize", () => { if (S) drawAll(); });
