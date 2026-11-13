@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Biodanza Betrachter 2.2</title>
+<title>Biodanza Betrachter 2.3</title>
 <style>
   :root { --ink: #222; --muted: #666; --line: #e3e3e3; --blue: #2a78d6; --orange: #eb6834; --green: #1baa7a; --purple: #8a4fd0; --bg: #fff; }
   * { box-sizing: border-box; }
@@ -26,7 +26,7 @@
 </style>
 </head>
 <body>
-<h1>Biodanza Betrachter 2.2</h1>
+<h1>Biodanza Betrachter 2.3</h1>
 <div class="row">
   <label><b>ZIP oder JSON öffnen:</b> <input type="file" id="file" accept=".zip,.json" multiple></label>
   <button id="mYoga" class="on">Yoga</button><button id="mNacht">Nacht</button><button id="mSerie">Serie</button><button id="mSamm">Sammlung</button>
@@ -378,6 +378,12 @@ function overlayOverview() {
   if (!S || !ovMap) return; const cv = $("ov"), c = cv.getContext("2d"), r = window.devicePixelRatio || 1; c.setTransform(r, 0, 0, r, 0, 0);
   const X = t => ovMap.L + (t - ovMap.t0) / (ovMap.t1 - ovMap.t0) * ovMap.W;
   pieces().forEach(p => { c.fillStyle = p.col; c.fillRect(X(p.a), 15, Math.max(1, X(p.b) - X(p.a)), 4); });
+  /* 2.3: Titel der Stücke unter dem Streifen, gekürzt auf die Breite */
+  c.font = "9px system-ui, sans-serif"; c.textBaseline = "top";
+  pieces().forEach(p => { const x0 = X(p.a), w = X(p.b) - x0 - 3; if (w < 18) return; let t = p.name.replace(/\s*\(.*\)\s*$/, "");
+    if (c.measureText(t).width > w) { while (t.length > 2 && c.measureText(t + "…").width > w) t = t.slice(0, -1); t += "…"; } if (t.length < 3) return;
+    c.lineWidth = 3; c.strokeStyle = "rgba(255,255,255,.9)"; c.strokeText(t, x0 + 1.5, 20.5); c.fillStyle = "#555"; c.fillText(t, x0 + 1.5, 20.5); });
+  c.textBaseline = "alphabetic";
   breathAid().forEach(p => { c.fillStyle = "rgba(13,148,136,.55)"; c.fillRect(X(p.a), 202, Math.max(1, X(p.b) - X(p.a)), 3); });
   marks().forEach(m => { const x = X(m.t); c.strokeStyle = m.typ === "Notiz" ? "#7c3aed" : m.typ === "Gefühl" ? "#0d9488" : "#555"; c.lineWidth = 1; c.beginPath(); c.moveTo(x, 20); c.lineTo(x, 200); c.stroke();
     if (m.typ !== "Marker") { c.fillStyle = c.strokeStyle; c.font = "10px system-ui, sans-serif"; c.fillText(m.name.slice(0, 18), x + 2, 30); } });
