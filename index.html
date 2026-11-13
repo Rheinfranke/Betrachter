@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Biodanza Betrachter 2.1</title>
+<title>Biodanza Betrachter 2.2</title>
 <style>
   :root { --ink: #222; --muted: #666; --line: #e3e3e3; --blue: #2a78d6; --orange: #eb6834; --green: #1baa7a; --purple: #8a4fd0; --bg: #fff; }
   * { box-sizing: border-box; }
@@ -26,7 +26,7 @@
 </style>
 </head>
 <body>
-<h1>Biodanza Betrachter 2.1</h1>
+<h1>Biodanza Betrachter 2.2</h1>
 <div class="row">
   <label><b>ZIP oder JSON öffnen:</b> <input type="file" id="file" accept=".zip,.json" multiple></label>
   <button id="mYoga" class="on">Yoga</button><button id="mNacht">Nacht</button><button id="mSerie">Serie</button><button id="mSamm">Sammlung</button>
@@ -222,19 +222,24 @@ function drawOverview() {
   /* Ereignisse der Nacht */
   if (mode === "nacht" && evList) evList.forEach(e => { if (e.art === "Vergleich") return; c.fillStyle = e.ok ? "#1baa7a" : "#bbb"; c.fillRect(X(e.t), y1 + 2, 1, 6); });
   /* Temperatur und WBGT */
-  const K = S.klima; const y2 = 215, y3 = 280;
+  const K = S.klima, HK = K.filter(k => Number.isFinite(k.hoehe_m)).sort((a, b) => a.t - b.t), hv = HK.map(k => k.hoehe_m);
+  const hOn = HK.length > 3 && Math.max(...hv) - Math.min(...hv) >= 3, y2 = 215, y3 = hOn ? 246 : 280;
   if (K.length) { const vs = K.flatMap(k => [k.c, k.wbgt]).filter(Number.isFinite), lo = Math.floor(Math.min(...vs)) - 1, hi = Math.ceil(Math.max(...vs)) + 1, YT = v => y3 - (v - lo) / (hi - lo) * (y3 - y2);
     axisY(c, L, y2, y3, lo, hi, hi - lo > 20 ? 10 : 5, W);
     const qs = [...new Set(K.map(k => k.quelle))], qc = ["#eb6834", "#8a4fd0", "#1baa7a"];
     qs.forEach((q, i) => { const Q = K.filter(k => k.quelle === q); ["c", "wbgt"].forEach(f => { c.strokeStyle = qc[i % 3]; c.setLineDash(f === "c" ? [] : [4, 3]); c.lineWidth = 1.3; c.beginPath(); let s = false; Q.forEach(k => { if (!Number.isFinite(k[f])) return; const x = X(k.t), y = YT(k[f]); if (!s) { c.moveTo(x, y); s = true; } else c.lineTo(x, y); }); c.stroke(); }); });
     c.setLineDash([]); }
   else { c.fillStyle = "#999"; c.fillText("keine Temperaturwerte", L + 4, y2 + 30); }
+  /* 2.2: Höhe aus dem Luftdruck des Ruuvi */
+  if (hOn) { const lo = Math.floor(Math.min(...hv) / 5) * 5, hi = Math.ceil(Math.max(...hv) / 5) * 5 + (Math.ceil(Math.max(...hv) / 5) * 5 === Math.floor(Math.min(...hv) / 5) * 5 ? 5 : 0), ya = 252, yb = 280, YH = v => yb - (v - lo) / (hi - lo) * (yb - ya);
+    axisY(c, L, ya, yb, lo, hi, hi - lo > 40 ? 20 : hi - lo > 20 ? 10 : 5, W);
+    c.strokeStyle = "#1baa7a"; c.lineWidth = 1.4; c.beginPath(); HK.forEach((k, i) => { const x = X(k.t), y = YH(k.hoehe_m); if (!i) c.moveTo(x, y); else c.lineTo(x, y); }); c.stroke(); }
   /* Zeitachse und Auswahl */
   c.fillStyle = "#666"; const span = t1 - t0, stp = span > 6 * 3600000 ? 3600000 : span > 2 * 3600000 ? 1800000 : 600000;
   for (let t = Math.ceil((T0 + t0) / stp) * stp - T0; t <= t1; t += stp) { const x = X(t); c.fillRect(x, 286, 1, 4); c.fillText(hm(t), x - 14, 299); }
   if (sel !== null) { const span2 = mode === "nacht" && nSel ? (+$("nSpan").value === 50 ? 50000 : 20000) : 20000, a = mode === "nacht" && nSel ? nSel.t - (span2 === 50000 ? 15000 : 5000) : sel;
     c.fillStyle = "rgba(235,104,52,.25)"; c.fillRect(X(a), 16, Math.max(2, X(a + span2) - X(a)), 270); }
-  legend("legTop", [["#2a78d6", "Puls je Minute (Linie) mit kleinstem und größtem Schlag in 10 s (Band)"], ["#eb6834", "Temperatur (Linie) und WBGT geschätzt (gestrichelt)"], ...[...new Set(acts.map(a => a.name))].map(n => [acol(n), n])]);
+  legend("legTop", [["#2a78d6", "Puls je Minute (Linie) mit kleinstem und größtem Schlag in 10 s (Band)"], ["#eb6834", "Temperatur (Linie) und WBGT geschätzt (gestrichelt)"], ...(hOn ? [["#1baa7a", "Höhe gegenüber dem Beginn aus dem Luftdruck, m"]] : []), ...[...new Set(acts.map(a => a.name))].map(n => [acol(n), n])]);
 }
 $("ov").addEventListener("click", ev => {
   if (!S || !ovMap) return; const r = $("ov").getBoundingClientRect(), x = ev.clientX - r.left, t = ovMap.t0 + (x - ovMap.L) / ovMap.W * (ovMap.t1 - ovMap.t0);
